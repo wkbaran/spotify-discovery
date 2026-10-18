@@ -69,16 +69,20 @@ The lane id and the descriptions say a lot about whose taste this is, which is w
 
 ```mermaid
 flowchart LR
-  cron["supercronic"] --> job["`**spotify-discovery**
-prompts + checks`"]
-  job -- "cron-llm" --> llm["LiteLLM → model"]
-  job -- "MCP over stdio" --> mcp["`**spotify-discovery-mcp**
-feed · verify · rules · state · report`"]
-  job -- "research tools" --> web["SearXNG · Firecrawl"]
+  cron["supercronic"] --> job
+  subgraph job["spotify-discovery"]
+    jp["prompts + checks"]
+    jc["cron-llm runtime"]
+  end
+  subgraph mcp["spotify-discovery-mcp"]
+    mp["feed · verify · rules · state · report"]
+    ml["job-ledger: state files<br/>paced-fetch: API pacing"]
+  end
+  job -- "model calls" --> llm["LiteLLM → model"]
+  job -- "MCP over stdio" --> mcp
   mcp --> api["Spotify Web API"]
+  job -- "research tools" --> web["SearXNG · Firecrawl"]
   mcp -. "genre lookups" .-> meta["Beatport · Deezer · SoundCloud"]
-  mcp -.- libs[("`job-ledger · paced-fetch
-state files · API pacing`")]
   job -- "webhook" --> discord["Discord"]
 ```
 
