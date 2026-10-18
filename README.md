@@ -13,7 +13,7 @@
 ![Discord](https://img.shields.io/badge/delivers%20to-Discord-5865F2?logo=discord&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
-[Lanes](#lanes) · [What the model is asked](#what-the-model-is-asked) · [How a lane run goes](#how-a-lane-run-goes) · [How fast](#how-fast-and-how-often) · [Running it](#running-it) · [Configuration](#configuration) · [Development](#development)
+[Lanes](#lanes) · [How it fits together](#how-it-fits-together) · [What the model is asked](#what-the-model-is-asked) · [How a lane run goes](#how-a-lane-run-goes) · [How fast](#how-fast-and-how-often) · [Running it](#running-it) · [Configuration](#configuration) · [Development](#development)
 
 </div>
 
@@ -64,6 +64,22 @@ The **lane id** is the lane's key in `lanes.json`: lowercase letters, digits, `-
 | `target` and the other limits | server | How many to pick, the mix of feed and web picks, the feed's request budget, how long unpicked tracks stay; see [spotify-discovery-mcp's README](https://github.com/wkbaran/spotify-discovery-mcp#the-rules). Set them per lane or under `defaults` |
 
 The lane id and the descriptions say a lot about whose taste this is, which is why the real `docker/crontab` is gitignored and `lanes.json` lives only in the state directory.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+  cron["supercronic"] --> job["spotify-discovery<br/>prompts + checks"]
+  job -- "cron-llm" --> llm["LiteLLM → model"]
+  job -- "MCP over stdio" --> mcp["spotify-discovery-mcp<br/>feed · verify · rules · state · report"]
+  job -- "research tools" --> web["SearXNG · Firecrawl"]
+  mcp --> api["Spotify Web API"]
+  mcp -. "genre lookups" .-> meta["Beatport · Deezer · SoundCloud"]
+  mcp -.- libs[("job-ledger · paced-fetch<br/>state files · API pacing")]
+  job -- "webhook" --> discord["Discord"]
+```
+
+The job holds only the prompts and the checks on each answer. [cron-llm](https://github.com/wkbaran/cron-llm) gives it the model calls, the MCP client and the Discord post. The MCP server owns everything with consequences: the API, the state and the message layout, on [job-ledger](https://github.com/wkbaran/job-ledger) for state and [paced-fetch](https://github.com/wkbaran/paced-fetch) for API pacing. The model never touches state or the API directly. The other jobs ([substack-digest](https://github.com/wkbaran/substack-digest), [medium-digest](https://github.com/wkbaran/medium-digest)) have the same shape with a different server.
 
 ## What the model is asked
 
