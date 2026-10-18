@@ -1,4 +1,21 @@
-# spotify-discovery
+<div align="center">
+
+# Spotify Discovery
+
+**A new Spotify discovery playlist every day, one genre lane at a time, with a report on every pick.**
+
+![Node 26+](https://img.shields.io/badge/node-26%2B-339933?logo=nodedotjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+![Runs in](https://img.shields.io/badge/runs%20in-Docker%20%2B%20supercronic-2496ED?logo=docker&logoColor=white)
+![LLM](https://img.shields.io/badge/LLM-OpenAI--compatible-412991)
+![MCP](https://img.shields.io/badge/uses-spotify--discovery--mcp-6E56CF)
+![Spotify](https://img.shields.io/badge/Spotify-Web%20API-1DB954?logo=spotify&logoColor=white)
+![Discord](https://img.shields.io/badge/delivers%20to-Discord-5865F2?logo=discord&logoColor=white)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+
+[Lanes](#lanes) · [How a lane run goes](#how-a-lane-run-goes) · [How fast](#how-fast-and-how-often) · [Running it](#running-it) · [Configuration](#configuration) · [Development](#development)
+
+</div>
 
 Genre lanes for a Spotify discovery playlist, as scheduled jobs. Each lane run adds a few new tracks that fit the lane to today's playlist and posts a report to a Discord channel: what was added, from where, and why.
 
@@ -7,6 +24,46 @@ It's a plain scheduled job, not an agent:
 - [spotify-discovery-mcp](https://github.com/wkbaran/spotify-discovery-mcp) runs as a child process. It creates or finds today's playlist, fetches new releases from the lane's known labels and artists, checks web finds on Spotify, drops anything already recommended, applies the lane's pick limits, adds the tracks, keeps all state and writes the report.
 - [cron-llm](https://github.com/wkbaran/cron-llm) runs the research as a bounded tool loop and asks for the final choice with a JSON schema, through any OpenAI-compatible gateway that supports tool calling.
 - The research tools are a [SearXNG](https://github.com/searxng/searxng) instance for search and a [Firecrawl](https://github.com/firecrawl/firecrawl) instance for reading pages, both self-hosted.
+
+## Lanes
+
+A **lane** is one genre slice of the day's playlist, with its own sources, its own taste description and its own memory. Each lane run adds a few tracks to the shared playlist and posts its own report.
+
+The **lane id** is the lane's key in `lanes.json`: lowercase letters, digits, `-` and `_`, up to 41 characters. It's what you pass on the command line (`main.js deep-house techno`), and it names everything that belongs to the lane: its learned state (`lanes/<id>.json`), its run files (`runs/<id>-<time>.json`), its tracks in `history.json`, and its name in Discord (`Spotify · <id>`). Renaming a lane id starts that lane over, so pick ids you'll keep.
+
+`lanes.json` sits in the state directory (`SPOTIFY_DISCOVERY_DIR`, `/data` in the container). You write it; the server never changes it, and reads it fresh on every run. A made-up example:
+
+```jsonc
+{
+  "playlist": { "name": "{YYMMDD}" },            // the day's playlist; {YYMMDD} is e.g. 261018
+  "defaults": { "feed_requests": 60, "feed_tracks": 18, "carry_days": 21 },
+  "lanes": {
+    "deep-house": {
+      "name": "Deep and soulful house",
+      "baseline": "Deep, soulful and jazzy house with warm chords and real vocals; late-night rather than peak-time.",
+      "research": "Small labels release in bursts; a current EP from one beats several older singles.",
+      "exclude": "Tech house, big-room vocal house, lo-fi beats.",
+      "target": [3, 6],
+      "labels": ["Example Records", "Another Label"],
+      "artists": ["Some Artist"],
+      "genres": ["Deep House"],
+      "tags": ["deep house", "soulful"]
+    }
+  }
+}
+```
+
+| Field | Used by | What it does |
+|---|---|---|
+| `name` | report, work list | The lane's title |
+| `baseline` | research, choice | What the lane sounds like. It's the main thing the model judges a track against, so describe the sound, not just the genre name |
+| `research` | research | Optional advice for the web search: how often the genre releases, where to look, what to favour |
+| `exclude` | research, choice | Optional: what doesn't belong, even if it's close |
+| `labels`, `artists` | feed | Seed sources: their new releases are offered every run, and research is told to look elsewhere. The lane adds more as it learns from picks (kept in `lanes/<id>.json`, not here) |
+| `genres`, `tags` | genre check | When genre lookups are on (`SPOTIFY_DISCOVERY_METADATA`), a track whose Beatport or Deezer genre matches none of these is marked "⚠ genre outside this lane" for the model |
+| `target` and the other limits | server | How many to pick, the mix of feed and web picks, the feed's request budget, how long unpicked tracks stay; see [spotify-discovery-mcp's README](https://github.com/wkbaran/spotify-discovery-mcp#the-rules). Set them per lane or under `defaults` |
+
+The lane id and the descriptions say a lot about whose taste this is, which is why the real `docker/crontab` is gitignored and `lanes.json` lives only in the state directory.
 
 ## How fast, and how often
 
@@ -37,7 +94,7 @@ node --env-file=.env dist/main.js <lane id> [<lane id> …] --dry-run
 
 `--dry-run` only stops `discovery_finish` from adding or saving: `discovery_begin` still finds or creates today's playlist and writes a run file, and research uses Spotify's quota.
 
-Sign in to Spotify once with `npx spotify-discovery-mcp login` and point `SPOTIFY_DISCOVERY_AUTH` at the `auth.json` it writes. Lanes are defined in `lanes.json` in the state directory; see the server's README.
+Sign in to Spotify once with `npx spotify-discovery-mcp login` and point `SPOTIFY_DISCOVERY_AUTH` at the `auth.json` it writes. Lanes are defined in `lanes.json` in the state directory; see [Lanes](#lanes).
 
 ### In a container
 
