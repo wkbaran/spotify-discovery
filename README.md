@@ -13,7 +13,7 @@
 ![Discord](https://img.shields.io/badge/delivers%20to-Discord-5865F2?logo=discord&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
-[Lanes](#lanes) · [How a lane run goes](#how-a-lane-run-goes) · [How fast](#how-fast-and-how-often) · [Running it](#running-it) · [Configuration](#configuration) · [Development](#development)
+[Lanes](#lanes) · [What the model is asked](#what-the-model-is-asked) · [How a lane run goes](#how-a-lane-run-goes) · [How fast](#how-fast-and-how-often) · [Running it](#running-it) · [Configuration](#configuration) · [Development](#development)
 
 </div>
 
@@ -64,6 +64,30 @@ The **lane id** is the lane's key in `lanes.json`: lowercase letters, digits, `-
 | `target` and the other limits | server | How many to pick, the mix of feed and web picks, the feed's request budget, how long unpicked tracks stay; see [spotify-discovery-mcp's README](https://github.com/wkbaran/spotify-discovery-mcp#the-rules). Set them per lane or under `defaults` |
 
 The lane id and the descriptions say a lot about whose taste this is, which is why the real `docker/crontab` is gitignored and `lanes.json` lives only in the state directory.
+
+## What the model is asked
+
+The model does two things in a lane run: research, the one open-ended step, and the final choice. Everything else (what's new from known sources, whether a track exists on Spotify, what was recommended before, the pick limits, the playlist and the report) is the server's.
+
+**Research.** The model gets the lane brief (`baseline`, `research` note, `exclude`, the pick target, and the labels and artists already covered) and is asked to find 6–12 recent tracks **from artists and labels not on the covered lists**. That's the point of research: the known sources are already checked by code, so the model is there to find new names. It's told to:
+
+- search label pages, Bandcamp, SoundCloud, Beatport, blogs, Reddit and artist pages, preferring releases from the last 6–12 months and smaller artists;
+- **base every reason on someone's text** (a label or Bandcamp description, an artist statement, a reputable blog) and say whose it is. "Sounds like", "on listen" and "has a vibe" are banned: the model can't listen, so a reason it made up would be a guess dressed as a judgment;
+- hand its finds to `verify_tracks` every few searches as plain lines (`artist | track | release | label | date | why, attributed | URL`), plus a line for any new label worth following. The server checks each on Spotify and answers ✓, pending (not out yet) or a reason it isn't usable.
+
+The budgets (20 searches, 10 page reads, 8 `verify_tracks` calls) are in the prompt and enforced by the loop: a tool disappears from the model's list when its calls are spent. If fewer than 3 tracks verify, research runs once more, told which searches it already tried.
+
+**The choice.** The model gets the server's review of everything pickable: verified web finds (`W`) with their attributed reasons, new releases from known sources (`K`), and tracks carried over from earlier runs (`C`), each with its label, date and, when a genre source knows it, a `Beatport:`, `SoundCloud:` or `Deezer:` genre line. It answers:
+
+| Field | What it means |
+|---|---|
+| `picks` | The tracks that best fit the **baseline**, best first. The server keeps the order and drops from the end to meet the limits, so order is the model's real say. Fewer than the target is fine; don't pad with weak fits |
+| `reject` | At most 3 `K` or `C` tracks that are **clearly the wrong genre** for the lane. These are never offered again. Not picking something is not a rejection: unpicked tracks carry over by themselves |
+| `why` | Only for a `K` or `C` pick with a quoted or attributed reason. `W` picks already have the one research found |
+
+On genre lines, it's told that "⚠ genre outside this lane" means the track doesn't fit unless the brief clearly supports it; that Deezer's genres are coarse (Folk or Rock is a real warning, Pop or Alternative without ⚠ isn't); and that a track with no genre line is one no source knew, so it mustn't guess the genre from the artist's name. This is the only call that thinks (`CHOICE_REASONING_EFFORT`).
+
+The code then checks the answer: refs the review doesn't list are dropped and logged, only `K` and `C` refs can be rejected, and whether the run counts as thin comes from how many tracks verified, not from the model.
 
 ## How fast, and how often
 
