@@ -9,6 +9,7 @@ Common mistakes and confusion points in this project. Add to this list when some
 - **Spotify's quota can run out for hours** (`429 QUOTA_EXCEEDED`, `Retry-After` of ~3 h, seen 2026-10-04). The server fails at once and blocks later requests; the job stops research and posts a skip or "not saved" line instead of retrying.
 - **thin is the code's call**, from the count of ✓ lines `verify_tracks` returned, not the model's opinion.
 - **The report is the server's**: after a real finish the job runs `spotify-discovery-mcp report`, which prints every finished, unprinted report (tracked in `reports.json`) and a ⚠ line for runs that never finished. That replaces Hermes's every-5-minutes report job.
+- **Lanes run in sequence from one command** (`main.js a b c …`), not one crontab line each: no start times to guess, and a Spotify block or expired login stops the remaining lanes instead of letting each waste requests.
 - **The real crontab is gitignored** (`docker/crontab`): lane ids describe the user's taste. Commit only `crontab.example`.
 - Only `SPOTIFY_DISCOVERY_*` variables and `TZ` reach the server, so the LLM key and webhooks don't.
 - Keep personal details out of the repo (it's public): no host paths, time zone, lane ids, webhook URLs or keys. They live in `docker/.env` and `docker/crontab`, both gitignored.

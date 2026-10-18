@@ -2,7 +2,7 @@ import { McpToolError, StructuredOutputError, tool } from "cron-llm";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { laneBrief } from "../src/prompts.js";
-import { runLane, type LaneServer } from "../src/lane.js";
+import { runLane, stopsTheRest, type LaneServer } from "../src/lane.js";
 
 const BEGIN = `Lane lane-a: Neurofunk and techstep
 Today's playlist: hermes20261020 (0 tracks so far)
@@ -174,6 +174,15 @@ describe("runLane", () => {
     };
     expect(await runLane({ ...base, server, llm, web: web([]), dryRun: true, report, minVerified: 0 })).toBe("**Lane:** Neurofunk");
     expect(calls.find((c) => c.name === "discovery_finish")!.args).toMatchObject({ picks: ["W1", "W4"], dry_run: true });
+  });
+});
+
+describe("stopsTheRest", () => {
+  it("is true for the skip and not-saved messages only", () => {
+    expect(stopsTheRest("🎧 Spotify lane lane-a skipped — Spotify is rate-limiting this app until 14:00Z.")).toBe(true);
+    expect(stopsTheRest("🎧 Spotify lane lane-a not saved — blocked until 14:00Z.")).toBe(true);
+    expect(stopsTheRest("**Lane:** Neurofunk")).toBe(false);
+    expect(stopsTheRest(null)).toBe(false);
   });
 });
 

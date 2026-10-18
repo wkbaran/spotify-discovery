@@ -28,6 +28,8 @@ export interface LaneOptions {
   minVerified?: number;
   maxTurns?: number;
   maxReject?: number;
+  /** `reasoning_effort` for the choice call alone, e.g. "medium" to let it think while the rest of the run doesn't. */
+  choiceReasoning?: string;
 }
 
 const REPORT_MARKER = /^===== REPORT[^\n]*\n/m;
@@ -35,6 +37,9 @@ const AUTH = /^Spotify login needed/;
 const RATE = /^Spotify rate limit/;
 const REF_LINE = /^\s*([WKC]\d+(?:\.\d+)?)\s{2,}/gm;
 const FIRST_SENTENCE = (s: string) => s.replace(/^Spotify rate limit:\s*/, "").split(/(?<=\.)\s/)[0]!;
+
+/** True for a lane's skip or "not saved" message: an expired login or a Spotify block, which the next lanes would hit too. */
+export const stopsTheRest = (message: string | null): boolean => !!message && /^🎧 Spotify lane \S+ (skipped|not saved) — /.test(message);
 
 /** Runs one lane and returns the message to post: the lane's report, or why it was skipped. */
 export async function runLane(opts: LaneOptions): Promise<string | null> {
@@ -88,7 +93,10 @@ export async function runLane(opts: LaneOptions): Promise<string | null> {
       maxTurns: opts.maxTurns ?? 40,
       log,
     });
-    log(`research: ${r.calls.length} tool calls (${count(r.calls, "web_search")} searches, ${count(r.calls, "web_extract")} pages, ${count(r.calls, "verify_tracks")} verify), ended by ${r.stopped}; ${verified} verified so far. ${r.value.summary}`);
+    // Counts are of calls that went through; a call over budget or with bad arguments is refused and counted apart.
+    const ok = r.calls.filter((c) => c.ok);
+    const failed = r.calls.length - ok.length;
+    log(`research: ${ok.length} tool calls (${count(ok, "web_search")} searches, ${count(ok, "web_extract")} pages, ${count(ok, "verify_tracks")} verify)${failed ? `, ${failed} refused or failed` : ""}, ended by ${r.stopped}; ${verified} verified so far. ${r.value.summary}`);
     return r;
   };
   const first = await research();
@@ -106,7 +114,7 @@ export async function runLane(opts: LaneOptions): Promise<string | null> {
   const maxReject = opts.maxReject ?? 3;
   let choice: Choice;
   try {
-    choice = pickable.size ? await opts.llm.structured(Choice, choicePrompt({ review, maxReject }), { name: "choice", tags: [`lane:${lane}`, "step:choice"] }) : { picks: [], reject: [], why: [] };
+    choice = pickable.size ? await opts.llm.structured(Choice, choicePrompt({ review, maxReject }), { name: "choice", tags: [`lane:${lane}`, "step:choice"], ...(opts.choiceReasoning ? { extra: { reasoning_effort: opts.choiceReasoning } } : {}) }) : { picks: [], reject: [], why: [] };
   } catch (err) {
     if (!(err instanceof StructuredOutputError)) throw err;
     // The verified web finds, with their attributed reasons, in the server's order.
