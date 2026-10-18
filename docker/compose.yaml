@@ -1,0 +1,17 @@
+name: spotify-discovery
+
+services:
+  spotify-discovery:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: spotify-discovery
+    container_name: spotify-discovery
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Absolute paths on the Docker host, set in docker/.env. Compose expands "~"
+      # on the machine running it, which with `docker -H ssh://...` is the client.
+      # ":z" relabels for SELinux.
+      - ${STATE_DIR:?set STATE_DIR in docker/.env to the discovery state directory}:/data:z
+      - ${AUTH_DIR:?set AUTH_DIR in docker/.env to the directory holding auth.json}:/auth:z

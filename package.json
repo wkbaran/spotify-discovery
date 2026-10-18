@@ -1,0 +1,34 @@
+{
+  "name": "spotify-discovery",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Genre lanes for a Spotify discovery playlist as scheduled jobs: spotify-discovery-mcp does Spotify and state, a model researches the web and picks tracks through an OpenAI-compatible gateway, and each lane's report goes to a Discord webhook",
+  "license": "MIT",
+  "author": "Bill Baran",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wkbaran/spotify-discovery.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node dist/main.js",
+    "dry-run": "node dist/main.js --dry-run"
+  },
+  "dependencies": {
+    "cron-llm": "^0.2.0",
+    "paced-fetch": "^0.1.0",
+    "spotify-discovery-mcp": "^0.4.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}

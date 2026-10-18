@@ -1,0 +1,5 @@
+# Copy to docker/crontab (gitignored: lane ids describe your taste) and list your lanes.
+# One line per lane id from lanes.json. Times are in the container's TZ (docker/.env).
+# Space them out: a lane takes 10–20 minutes, and every lane shares the model and Spotify's quota.
+0  9 * * 2,5  node /app/dist/main.js lane-a
+30 9 * * 2,5  node /app/dist/main.js lane-b
