@@ -40,6 +40,7 @@ function fakeServer(over: Partial<Record<string, (args: any) => string>> = {}) {
     discovery_begin: () => BEGIN,
     verify_tracks: () => "W1 ✓ Vanta — Signal Loss · 2026-10-02 · Sublevel Recordings\nW2 pending Ash Meridian — Fever Line\nW3 ✓ Lumen Drift — Glass Engine\nW4 ✓ X — Y",
     discovery_review: () => REVIEW,
+    discovery_fill: () => "Lane lane-a has no room for more picks; nothing was checked. Call discovery_finish with your picks.",
     discovery_finish: () => "Saved. Added 3 track(s) to hermes20261020: …\nThe report job posts the full report. Reply with one line: Done: lane-a",
     ...over,
   };
@@ -109,10 +110,31 @@ describe("runLane", () => {
     expect(research).toContain("Covered labels (research should look elsewhere): Obsidian Audio");
     expect(research).not.toContain("K1  Kestrel");
     expect(calls.find((c) => c.name === "verify_tracks")!.args.lane).toBe("lane-a");
+    expect(calls[0]).toEqual({ name: "discovery_begin", args: { lane: "lane-a", feed: false } });
+    // The lane had no room left, so one review and one choice.
+    expect(calls.find((c) => c.name === "discovery_fill")!.args).toEqual({ lane: "lane-a", picks: ["W4", "W1", "K2.1"] });
+    expect(calls.filter((c) => c.name === "discovery_review")).toHaveLength(1);
 
     const finish = calls.find((c) => c.name === "discovery_finish")!.args;
     expect(finish).toEqual({ lane: "lane-a", picks: ["W4", "W1", "K2.1"], reject: ["C1"], why: { "K2.1": "Obsidian: 'rolling'" }, thin: false, dry_run: false });
     expect(lines).toContain("choice: ignoring refs not in the review: W2, Z9");
+  });
+
+  it("fills from known sources only when the lane is short, and chooses the rest from what that added", async () => {
+    const FILL = "Lane lane-a: checked the known labels and artists for up to 2 more picks.\n\nNew from known labels and artists:\nK1  Kestrel — Hollow Ground · single, 2026-10-01 · Ferrous Records\n\nNext: call discovery_review for the full list, then discovery_finish.";
+    const { server, calls } = fakeServer({ discovery_fill: () => FILL });
+    const users: string[] = [];
+    const { llm } = fakeLlm(["DONE 2"], (name, user) => {
+      users.push(user);
+      return users.length === 1 ? { picks: ["W1"], reject: [], why: [] } : { picks: ["W1", "K1", "C1"], reject: ["C1"], why: [{ ref: "K1", reason: "Ferrous: 'heavy'" }] };
+    });
+    const lines: string[] = [];
+    await runLane({ ...base, server, llm, web: web([]), log: (l) => lines.push(l) });
+    expect(calls.filter((c) => c.name === "discovery_review")).toHaveLength(2);
+    expect(users[1]).toContain("Already chosen: W1. Those stay; don't list them again. The lane has room for up to 2 more");
+    expect(lines).toContain("fill: short by 2; new K1");
+    expect(lines).toContain("choice (more): K1, C1");
+    expect(calls.find((c) => c.name === "discovery_finish")!.args).toMatchObject({ picks: ["W1", "K1", "C1"], reject: [], why: { K1: "Ferrous: 'heavy'" } });
   });
 
   it("runs research a second time with different searches when too little verified, and marks the run thin", async () => {

@@ -2,10 +2,12 @@ import { McpToolError, runLoop, StructuredOutputError, tool, type Llm, type Loop
 import { z } from "zod";
 import { Choice, choicePrompt, laneBrief, researchPrompt, ResearchResult, type Budgets } from "./prompts.js";
 
-// One lane run: discovery_begin, a bounded research loop (web search, page reads,
-// verify_tracks), discovery_review, one structured choice, discovery_finish, then
-// the server's report. The server owns Spotify, limits, playlist and state; this
-// file owns the order of calls and the checks on what the model returns.
+// One lane run, web first: discovery_begin (no feed), a bounded research loop (web
+// search, page reads, verify_tracks), discovery_review and a structured choice; then,
+// only if the lane is still short, discovery_fill (known labels and artists, then
+// pending finds) and a second choice for the rest; discovery_finish, then the server's
+// report. The server owns Spotify, limits, playlist and state; this file owns the
+// order of calls and the checks on what the model returns.
 
 export interface LaneServer {
   call(name: string, args?: Record<string, unknown>): Promise<string>;
@@ -49,7 +51,8 @@ export async function runLane(opts: LaneOptions): Promise<string | null> {
   // 1. Begin.
   let begin: string;
   try {
-    begin = await server.call("discovery_begin", { lane });
+    // Known sources wait: discovery_fill looks at them only if the web finds leave the lane short.
+    begin = await server.call("discovery_begin", { lane, feed: false });
   } catch (err) {
     if (!(err instanceof McpToolError)) throw err;
     if (AUTH.test(err.message)) return `${head} skipped — the spotify-discovery-mcp login has expired. Run spotify-discovery-mcp login and copy auth.json into the job's auth directory.`;
@@ -108,28 +111,31 @@ export async function runLane(opts: LaneOptions): Promise<string | null> {
   if (rateLimited) log(`research stopped: ${rateLimited}`);
 
   // 3. Review, then one structured choice, checked against the review's refs.
-  const review = await server.call("discovery_review", { lane });
-  const pickable = new Set([...review.matchAll(REF_LINE)].map((m) => m[1]!.toUpperCase()));
-  if (!pickable.size) log("review: nothing pickable");
   const maxReject = opts.maxReject ?? 3;
-  let choice: Choice;
-  try {
-    choice = pickable.size ? await opts.llm.structured(Choice, choicePrompt({ review, maxReject }), { name: "choice", tags: [`lane:${lane}`, "step:choice"], ...(opts.choiceReasoning ? { extra: { reasoning_effort: opts.choiceReasoning } } : {}) }) : { picks: [], reject: [], why: [] };
-  } catch (err) {
-    if (!(err instanceof StructuredOutputError)) throw err;
-    // The verified web finds, with their attributed reasons, in the server's order.
-    log(`choice: no usable answer (${err.message}); picking the verified web finds`);
-    choice = { picks: [...pickable].filter((r) => r.startsWith("W")), reject: [], why: [] };
-  }
-  const known = (r: string) => pickable.has(r.trim().toUpperCase());
-  const ignored = [...choice.picks, ...choice.reject].filter((r) => !known(r));
-  if (ignored.length) log(`choice: ignoring refs not in the review: ${ignored.join(", ")}`);
-  const picks = [...new Set(choice.picks.filter(known).map((r) => r.trim().toUpperCase()))];
-  const reject = [...new Set(choice.reject.filter(known).map((r) => r.trim().toUpperCase()))].filter((r) => /^[KC]/.test(r) && !picks.includes(r)).slice(0, maxReject);
-  const why = Object.fromEntries(choice.why.map((w) => [w.ref.trim().toUpperCase(), w.reason]).filter(([r]) => /^[KC]/.test(r!) && picks.includes(r!)));
+  let { picks, reject, why } = await choose(opts, await server.call("discovery_review", { lane }), { maxReject });
   log(`choice: ${picks.join(", ") || "none"}${reject.length ? `; reject ${reject.join(", ")}` : ""}`);
 
-  // 4. Finish. thin is the code's call: the research verified too little.
+  // 4. Only if that leaves room: the known labels and artists, then pending finds, for as many as are missing.
+  let fill = "";
+  try {
+    fill = await server.call("discovery_fill", { lane, picks });
+  } catch (err) {
+    if (!(err instanceof McpToolError)) throw err;
+    log(`fill: ${err.message}`);
+  }
+  const need = Number(fill.match(/for up to (\d+) more/)?.[1] ?? 0);
+  const added = [...fill.matchAll(REF_LINE)].map((m) => m[1]!.toUpperCase());
+  if (fill) log(`fill: ${need ? `short by ${need}; ${added.length ? `new ${added.join(", ")}` : "nothing new"}` : "no room left"}`);
+  if (need && added.length) {
+    const more = await choose(opts, await server.call("discovery_review", { lane }), { maxReject: maxReject - reject.length, chosen: picks, more: need });
+    const extra = more.picks.filter((r) => !picks.includes(r));
+    log(`choice (more): ${extra.join(", ") || "none"}${more.reject.length ? `; reject ${more.reject.join(", ")}` : ""}`);
+    picks = [...picks, ...extra];
+    reject = [...reject, ...more.reject.filter((r) => !picks.includes(r) && !reject.includes(r))].slice(0, maxReject);
+    why = { ...why, ...more.why };
+  }
+
+  // 5. Finish. thin is the code's call: the research verified too little.
   let finish: string;
   try {
     finish = await server.call("discovery_finish", { lane, picks, reject, why, thin: verified < (opts.minVerified ?? 3), dry_run: Boolean(opts.dryRun) });
@@ -140,13 +146,43 @@ export async function runLane(opts: LaneOptions): Promise<string | null> {
   }
   log(finish.split(REPORT_MARKER)[0]!.trim().split("\n")[0]!);
 
-  // 5. The report: in a dry run it's in finish's text; otherwise the server prints it once.
+  // 6. The report: in a dry run it's in finish's text; otherwise the server prints it once.
   if (opts.dryRun) {
     const at = finish.search(REPORT_MARKER);
     return at < 0 ? finish : finish.slice(at).replace(REPORT_MARKER, "").trim();
   }
   const report = (await opts.report()).trim();
   return report || null;
+}
+
+/** One structured choice over a review, checked against its refs. Falls back to the verified web finds when the answer is unusable. */
+async function choose(opts: LaneOptions, review: string, p: { maxReject: number; chosen?: string[]; more?: number }): Promise<{ picks: string[]; reject: string[]; why: Record<string, string> }> {
+  const { lane, log } = opts;
+  const pickable = new Set([...review.matchAll(REF_LINE)].map((m) => m[1]!.toUpperCase()));
+  if (!pickable.size) log("review: nothing pickable");
+  const chosen = new Set(p.chosen ?? []);
+  let choice: Choice;
+  try {
+    choice = pickable.size
+      ? await opts.llm.structured(Choice, choicePrompt({ review, maxReject: p.maxReject, chosen: p.chosen, more: p.more }), {
+          name: "choice",
+          tags: [`lane:${lane}`, "step:choice"],
+          ...(opts.choiceReasoning ? { extra: { reasoning_effort: opts.choiceReasoning } } : {}),
+        })
+      : { picks: [], reject: [], why: [] };
+  } catch (err) {
+    if (!(err instanceof StructuredOutputError)) throw err;
+    // The verified web finds, with their attributed reasons, in the server's order.
+    log(`choice: no usable answer (${err.message}); picking the verified web finds`);
+    choice = { picks: [...pickable].filter((r) => r.startsWith("W")), reject: [], why: [] };
+  }
+  const known = (r: string) => pickable.has(r.trim().toUpperCase());
+  const ignored = [...choice.picks, ...choice.reject].filter((r) => !known(r));
+  if (ignored.length) log(`choice: ignoring refs not in the review: ${ignored.join(", ")}`);
+  const picks = [...new Set(choice.picks.filter(known).map((r) => r.trim().toUpperCase()))].filter((r) => !chosen.has(r));
+  const reject = [...new Set(choice.reject.filter(known).map((r) => r.trim().toUpperCase()))].filter((r) => /^[KC]/.test(r) && !picks.includes(r) && !chosen.has(r)).slice(0, Math.max(0, p.maxReject));
+  const why = Object.fromEntries(choice.why.map((w) => [w.ref.trim().toUpperCase(), w.reason]).filter(([r]) => /^[KC]/.test(r!) && picks.includes(r!)));
+  return { picks, reject, why };
 }
 
 function count(calls: { name: string }[], name: string): number {

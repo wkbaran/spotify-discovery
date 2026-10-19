@@ -114,19 +114,21 @@ The code then checks the answer: refs the review doesn't list are dropped and lo
 
 ## How fast, and how often
 
-Six lanes take about 20 minutes in all (3–4 minutes each on a local Qwen 27B through LiteLLM), against about 10–15 minutes a lane when the same lanes ran as Hermes agent jobs, spaced out over three hours. Almost all of that difference is generated tokens: the research loop runs with thinking off (`LLM_REASONING_EFFORT=none`), and the code makes the bookkeeping calls a Hermes main session spent turns on. Only the final choice thinks (`CHOICE_REASONING_EFFORT`), which adds about half a minute a lane. The server's feed stays inside a request budget, which keeps a day's lanes inside Spotify's daily Development Mode quota. Together that's what makes a playlist every day practical, where Hermes managed Tuesdays and Fridays.
+Six lanes take about 20 minutes in all (3–4 minutes each on a local Qwen 27B through LiteLLM), against about 10–15 minutes a lane when the same lanes ran as Hermes agent jobs, spaced out over three hours. Almost all of that difference is generated tokens: the research loop runs with thinking off (`LLM_REASONING_EFFORT=none`), and the code makes the bookkeeping calls a Hermes main session spent turns on. Only the final choice thinks (`CHOICE_REASONING_EFFORT`), which adds about half a minute a lane. Web first, the known sources checked only when a lane is short, keeps a day's lanes inside Spotify's daily Development Mode quotas (see the server's README). Together that's what makes a playlist every day practical, where Hermes managed Tuesdays and Fridays.
 
 ## How a lane run goes
 
-1. `discovery_begin` returns the lane brief (baseline, notes, limits, the labels and artists already covered) and the new releases from known sources. Since spotify-discovery-mcp 0.5.0 it checks those sources longest-waiting first and stops at a request budget, so a lane's Spotify cost no longer grows with every label it learns; see the server's README.
+Web first: what research finds is most likely to be new to you, so it goes first, and a lane stops looking once it has its tracks.
+
+1. `discovery_begin` (with `feed: false`) returns the lane brief (baseline, notes, limits, the labels and artists already covered) and the tracks carried over from earlier runs. It makes no Spotify searches.
 2. **Research**, the one open-ended step: the model searches the web, reads pages and hands its finds to `verify_tracks`, which checks each on Spotify. Budgets are enforced in code (by default 20 searches, 10 page reads, 8 `verify_tracks` calls): a tool disappears from the model's list when its calls are spent. If fewer than 3 tracks verify, research runs once more with different searches.
-3. `discovery_review` lists everything pickable, from the server's records.
-4. One structured call chooses the tracks, best first, and at most 3 to reject. This is the only call that thinks, when `CHOICE_REASONING_EFFORT` is set. The code drops refs the review doesn't list, rejects only K and C refs, and keeps reasons only for K and C picks.
+3. `discovery_review` lists everything pickable, from the server's records, and one structured call chooses the tracks, best first, and at most 3 to reject. This is the only call that thinks, when `CHOICE_REASONING_EFFORT` is set. The code drops refs the review doesn't list, rejects only K and C refs, and keeps reasons only for K and C picks.
+4. `discovery_fill` takes those picks. If they fill the lane (its `target` maximum, or the K/C limit), it does nothing. Otherwise it checks the lane's known labels and artists for about as many tracks as are missing, and then, only if those come up short, earlier web finds that weren't on Spotify yet. When it adds anything, the job reviews again and makes a second, smaller choice: the first picks stay, and the model picks at most the number missing from what was added.
 5. `discovery_finish` applies the limits, adds the tracks and saves. The job then runs the server's `report` command, which prints each finished report once, and posts it.
 
-Tracks that were shown but not picked aren't lost: the server keeps them in the lane's pool and offers them again (as `C` refs) for `carry_runs` runs, and web finds not yet on Spotify are re-checked each run until they appear.
+Tracks that were shown but not picked aren't lost: the server keeps them in the lane's pool and offers them again (as `C` refs) for `carry_days` days. Web finds not yet on Spotify are looked for again when a lane runs short, at most once a week each.
 
-A Spotify rate limit ends research at once (every tool then says so) and is reported instead of retried. An expired login or a rate limit at `discovery_begin` posts a one-line skip message. Anything else fails the run with a notice, and the lane's next run starts over.
+A Spotify rate limit ends research at once (every tool then says so) and is reported instead of retried. Spotify's quotas are per endpoint, so a block during `discovery_fill` ends only that step, and the lane finishes with what it has. An expired login or a rate limit at `discovery_begin` posts a one-line skip message (also in the log) and stops the lanes after it. Anything else fails the run with a notice, and the lane's next run starts over.
 
 ## Running it
 

@@ -13,7 +13,7 @@ export interface Budgets {
 export function laneBrief(beginText: string): string {
   return beginText
     .split("\n")
-    .filter((l) => l.trim() && !/^\s*[KC]\d/.test(l) && !/^(New from known labels|Continuing this lane)/.test(l) && !/^Today's playlist/.test(l))
+    .filter((l) => l.trim() && !/^\s*[KC]\d/.test(l) && !/^(New from known labels|Known labels and artists:|Carried over from earlier runs|Continuing this lane)/.test(l) && !/^Today's playlist/.test(l))
     .join("\n");
 }
 
@@ -59,13 +59,17 @@ export const Choice = z.object({
 });
 export type Choice = z.infer<typeof Choice>;
 
-export function choicePrompt(p: { review: string; maxReject: number }): { system: string; user: string } {
+export function choicePrompt(p: { review: string; maxReject: number; chosen?: string[]; more?: number }): { system: string; user: string } {
   return {
     system: "You choose the tracks for one genre lane of a Spotify discovery playlist, from candidates the server has already checked on Spotify.",
     user: [
       p.review.replace(/\nNext: [^\n]*$/, ""),
       "",
-      "Choose the tracks that best fit the baseline, best first; the server keeps your order and drops from the end to meet the limits above.",
+      ...(p.chosen?.length || p.more
+        ? [
+            `Already chosen: ${p.chosen?.length ? p.chosen.join(", ") : "nothing"}. Those stay; don't list them again. The lane has room for up to ${p.more} more, so choose at most ${p.more} from the other refs, best first, and only ones that fit as well as the chosen ones.`,
+          ]
+        : ["Choose the tracks that best fit the baseline, best first; the server keeps your order and drops from the end to meet the limits above."]),
       "A Beatport:, SoundCloud: or Deezer: line gives the genre. \"⚠ genre outside this lane\" means it doesn't fit: pick it only if the brief clearly supports it. " +
         "Deezer's genres are coarse: Folk or Rock is a real warning, but Pop or Alternative without ⚠ doesn't settle it. A track with no genre line is one no source knew; don't guess its genre from the artist's name.",
       `reject: at most ${p.maxReject} K or C refs that are clearly the wrong genre. Unpicked refs carry over to later runs by themselves, so don't reject a ref just because you didn't pick it.`,

@@ -28,7 +28,10 @@ for (const lane of lanes) {
     `spotify-discovery ${lane}`,
     async ({ env, dryRun, log }) => {
       const message = await laneRun(lane, env, dryRun, log);
-      if (stopsTheRest(message)) stopped = message;
+      if (stopsTheRest(message)) {
+        stopped = message;
+        log(message!); // Otherwise the reason is only in Discord.
+      }
       return message;
     },
     // One name per lane, so Discord doesn't run back-to-back lane reports together.
