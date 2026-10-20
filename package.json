@@ -23,7 +23,7 @@
   "dependencies": {
     "cron-llm": "^0.3.0",
     "paced-fetch": "^0.1.0",
-    "spotify-discovery-mcp": "^0.5.0",
+    "spotify-discovery-mcp": "^0.6.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
