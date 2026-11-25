@@ -167,6 +167,7 @@ The container runs as uid 1000; the state and auth directories should belong to 
 | `RESEARCH_SEARCHES`, `RESEARCH_PAGES`, `RESEARCH_VERIFY_CALLS` | Tool budgets (default 20, 10, 8), stated in the research prompt and enforced by the loop |
 | `RESEARCH_TRACKS_MIN`, `RESEARCH_TRACKS_MAX`, `RESEARCH_MIN_VERIFIED` | How many tracks research aims for, and the fewest verified before a second pass (default 6, 12, 3). Fewer than the minimum also marks the run thin |
 | `RESEARCH_MAX_TURNS` | Model turns in one research pass (default 40) |
+| `LLM_MAX_TOKENS` | Most tokens in any one reply, thinking included (cron-llm 0.4.0+, default 8192). Normal replies are about 90 tokens and a thinking choice call up to about 4,000. It stops a model that starts repeating itself: on 2026-11-25 one request ran past the job's 15-minute timeout, and Ollama went on generating for it, holding up the next lane |
 | `CHOICE_REASONING_EFFORT` | `reasoning_effort` for the final choice alone, over `LLM_REASONING_EFFORT`. With `LLM_REASONING_EFFORT=none` for speed, `medium` here lets just the choice think (with Ollama and Qwen, anything but `none` turns thinking on) |
 | `SEARCH_RESULTS`, `PAGE_CHARS` | Results per search and characters per page shown to the model (default 8, 8000) |
 | `SPOTIFY_DISCOVERY_*`, `TZ` | Passed to spotify-discovery-mcp, and nothing else from the job's environment is. `SPOTIFY_DISCOVERY_DIR` defaults to `/data` and `SPOTIFY_DISCOVERY_AUTH` to `/auth/auth.json` |
